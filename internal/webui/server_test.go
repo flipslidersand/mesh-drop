@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -125,6 +126,65 @@ func TestHandleSendDir_RejectsMultipleTopLevelDirectories(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleHistory_EmptyReturnsEmptyArray(t *testing.T) {
+	s := New("127.0.0.1:0", time.Second)
+	req := httptest.NewRequest(http.MethodGet, "/api/history", nil)
+	rr := httptest.NewRecorder()
+	s.handleHistory(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var out []HistoryEntry
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected empty array, got %d entries", len(out))
+	}
+}
+
+func TestHandleHistory_ReturnsNewest50(t *testing.T) {
+	s := New("127.0.0.1:0", time.Second)
+	for i := 0; i < 55; i++ {
+		s.history = append(s.history, HistoryEntry{ID: fmt.Sprintf("%d", i)})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history", nil)
+	rr := httptest.NewRecorder()
+	s.handleHistory(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var out []HistoryEntry
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(out) != 50 {
+		t.Fatalf("expected 50 entries, got %d", len(out))
+	}
+	// Newest first: history[54] → out[0], history[5] → out[49]
+	if out[0].ID != "54" {
+		t.Fatalf("expected newest entry first (id=54), got id=%s", out[0].ID)
+	}
+	if out[49].ID != "5" {
+		t.Fatalf("expected oldest retained entry last (id=5), got id=%s", out[49].ID)
+	}
+}
+
+func TestHandleHistory_MethodNotAllowed(t *testing.T) {
+	s := New("127.0.0.1:0", time.Second)
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/api/history", nil)
+		rr := httptest.NewRecorder()
+		s.handleHistory(rr, req)
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("method %s: expected 405, got %d", method, rr.Code)
+		}
 	}
 }
 

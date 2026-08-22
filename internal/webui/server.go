@@ -158,6 +158,10 @@ func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
 
 // handleHistory returns the in-memory transfer history (newest first, max 50).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	s.histMu.Lock()
 	h := make([]HistoryEntry, len(s.history))
 	copy(h, s.history)
