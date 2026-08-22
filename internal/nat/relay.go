@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// randReader はテストで差し替え可能な乱数ソース。
+var randReader io.Reader = rand.Reader
+
 // RelayServer は2ピアのアドレスを交換するランデブーサーバー。
 // 受信側が CreateSession でコードを取得し、送受信双方が Rendezvous を呼ぶと
 // 互いの外部アドレスを返す (long-poll 方式)。
@@ -290,7 +293,13 @@ func (s *RelayServer) handleCreate(w http.ResponseWriter, r *http.Request) {
 	for {
 		// #161: コードを6文字から12文字に拡張して列挙攻撃耐性を向上させる。
 		// 36^12 ≈ 4.7×10^18 の空間は6文字の36^6 ≈ 2.2×10^9 の約21億倍。
-		code = randomCode(12)
+		var err error
+		code, err = randomCode(12)
+		if err != nil {
+			s.mu.Unlock()
+			http.Error(w, "internal server error", http.StatusServiceUnavailable)
+			return
+		}
 		if _, exists := s.sessions[code]; !exists {
 			break
 		}
@@ -460,7 +469,7 @@ func Rendezvous(relayURL, code, myAddr string) (string, error) {
 	return peer, nil
 }
 
-func randomCode(n int) string {
+func randomCode(n int) (string, error) {
 	const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	// rejection sampling でモジュロバイアスを排除する。
 	// 256 % 36 = 4 なのでバイト値 252-255 を棄却することで均一分布を保証する。
@@ -468,8 +477,8 @@ func randomCode(n int) string {
 	out := make([]byte, 0, n)
 	buf := make([]byte, n+8) // 棄却分の余裕
 	for len(out) < n {
-		if _, err := rand.Read(buf); err != nil {
-			panic(err)
+		if _, err := io.ReadFull(randReader, buf); err != nil {
+			return "", err
 		}
 		for _, v := range buf {
 			if len(out) == n {
@@ -481,5 +490,5 @@ func randomCode(n int) string {
 			out = append(out, alpha[int(v)%len(alpha)])
 		}
 	}
-	return string(out)
+	return string(out), nil
 }

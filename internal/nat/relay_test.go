@@ -1,6 +1,8 @@
 package nat
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -122,7 +124,10 @@ func TestRelaySessionCleanupOnTimeout(t *testing.T) {
 }
 
 func TestRandomCode(t *testing.T) {
-	got := randomCode(6)
+	got, err := randomCode(6)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 6 {
 		t.Fatalf("len=%d, want 6", len(got))
 	}
@@ -172,7 +177,11 @@ func TestRandomCodeDistribution(t *testing.T) {
 	const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	seen := make(map[rune]bool)
 	for i := 0; i < 5000; i++ {
-		for _, c := range randomCode(6) {
+		code, err := randomCode(6)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range code {
 			seen[c] = true
 		}
 		if len(seen) == len(alpha) {
@@ -281,5 +290,46 @@ func TestRelayJoinRateLimit_WithProxy(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		t.Errorf("clientB should not be rate-limited, got %d", resp.StatusCode)
+	}
+}
+
+// errReader は常にエラーを返す io.Reader — randomCode の rand 失敗をシミュレート。
+type errReader struct{ err error }
+
+func (e errReader) Read(p []byte) (int, error) { return 0, e.err }
+
+func TestRelayRandomCodeError_Returns503(t *testing.T) {
+	orig := randReader
+	randReader = errReader{err: errors.New("rng failed")}
+	defer func() { randReader = orig }()
+
+	srv := NewRelayServer()
+	req := httptest.NewRequest(http.MethodPost, "/session", bytes.NewReader(nil))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRelayRandomCodeError_NoPanic(t *testing.T) {
+	orig := randReader
+	randReader = errReader{err: errors.New("rng failed")}
+	defer func() { randReader = orig }()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+
+	srv := NewRelayServer()
+	req := httptest.NewRequest(http.MethodPost, "/session", bytes.NewReader(nil))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
 	}
 }
