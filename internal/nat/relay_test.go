@@ -122,7 +122,10 @@ func TestRelaySessionCleanupOnTimeout(t *testing.T) {
 }
 
 func TestRandomCode(t *testing.T) {
-	got := randomCode(6)
+	got, err := randomCode(6)
+	if err != nil {
+		t.Fatalf("randomCode: %v", err)
+	}
 	if len(got) != 6 {
 		t.Fatalf("len=%d, want 6", len(got))
 	}
@@ -172,7 +175,11 @@ func TestRandomCodeDistribution(t *testing.T) {
 	const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	seen := make(map[rune]bool)
 	for i := 0; i < 5000; i++ {
-		for _, c := range randomCode(6) {
+		code, err := randomCode(6)
+		if err != nil {
+			t.Fatalf("randomCode: %v", err)
+		}
+		for _, c := range code {
 			seen[c] = true
 		}
 		if len(seen) == len(alpha) {
